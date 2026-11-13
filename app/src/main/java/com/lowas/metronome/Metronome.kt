@@ -56,7 +56,7 @@ data class MSettings(
     val pattern: String = DEFAULT_PATTERN,
     val keepAwake: Boolean = false,
     /** Material You: use wallpaper colours on Android 12 and later. */
-    val dynamic: Boolean = Build.VERSION.SDK_INT >= 31,
+    val wallpaper: Boolean = Build.VERSION.SDK_INT >= 31,
     /** 0 root, 1 root + fifth, 2 root + octave, 3 root + fifth + octave. */
     val droneChord: Int = 0,
     val mixAccent: Float = 1f,
@@ -214,7 +214,7 @@ object Metronome {
             a4 = prefs.getInt("a4", d.a4).coerceIn(415, 466),
             pattern = validPattern(prefs.getString("pattern", d.pattern)),
             keepAwake = prefs.getBoolean("keepAwake", d.keepAwake),
-            dynamic = prefs.getBoolean("dynamic", d.dynamic),
+            wallpaper = prefs.getBoolean("dynamic", d.wallpaper),
             droneChord = prefs.getInt("droneChord", d.droneChord).coerceIn(0, 3),
             mixAccent = prefs.getFloat("mixAccent", d.mixAccent),
             mixBeat = prefs.getFloat("mixBeat", d.mixBeat),
@@ -270,7 +270,7 @@ object Metronome {
             .putInt("droneWave", s.droneWave).putFloat("droneVolume", s.droneVolume)
             .putInt("a4", s.a4)
             .putString("pattern", s.pattern).putBoolean("keepAwake", s.keepAwake)
-            .putBoolean("dynamic", s.dynamic).putInt("droneChord", s.droneChord)
+            .putBoolean("dynamic", s.wallpaper).putInt("droneChord", s.droneChord)
             .putFloat("mixAccent", s.mixAccent).putFloat("mixBeat", s.mixBeat).putFloat("mixSub", s.mixSub)
             .putInt("vibStrength", s.vibStrength).putInt("vibOffset", s.vibOffset)
             .putBoolean("trainerOn", s.trainerOn).putInt("trainerStep", s.trainerStep)

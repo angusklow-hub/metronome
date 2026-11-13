@@ -182,7 +182,7 @@ private fun resolveScheme(ctx: Context, s: MSettings, systemDark: Boolean): Pair
     }
     val accent = Accents[s.accent.coerceIn(0, Accents.lastIndex)].second
     val base: ColorScheme =
-        if (s.dynamic && Build.VERSION.SDK_INT >= 31) {
+        if (s.wallpaper && Build.VERSION.SDK_INT >= 31) {
             if (dark) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
         } else {
             customScheme(dark, accent)
@@ -484,7 +484,7 @@ fun MetronomeApp(onToggleMetronome: () -> Unit, onToggleDrone: () -> Unit) {
     val ctx = LocalContext.current
     val systemDark = isSystemInDarkTheme()
     val (scheme, dark) = resolveScheme(ctx, s, systemDark)
-    val look = lookOf(s.skin)
+    val look = remember(s.skin) { lookOf(s.skin) }
     val pal = palFrom(scheme, dark, s)
     val sheetColor = if (pal.glass) pal.card.copy(alpha = 0.55f + 0.3f * (1f - pal.glassAmt)) else pal.card
 
@@ -652,10 +652,10 @@ private fun ThemeSheet(pal: Pal, s: MSettings) {
                 pal,
                 "Wallpaper colours",
                 "Material You: take the colours from your wallpaper",
-                s.dynamic
-            ) { v -> Metronome.update { it.copy(dynamic = v) } }
+                s.wallpaper
+            ) { v -> Metronome.update { it.copy(wallpaper = v) } }
         }
-        if (!(canDynamic && s.dynamic)) {
+        if (!(canDynamic && s.wallpaper)) {
             Spacer(Modifier.height(20.dp))
             SectionLabel(pal, "Accent colour")
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
