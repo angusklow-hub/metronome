@@ -39,6 +39,8 @@ class Look(val skin: Skin) {
     val gap: Dp = when (skin) { Skin.M3 -> 14.dp; Skin.ONEUI -> 12.dp; Skin.IOS -> 10.dp }
     /** Radius of buttons and chips; One UI and iOS both favour full capsules. */
     val chip: Dp = when (skin) { Skin.M3 -> 10.dp; Skin.ONEUI -> 22.dp; Skin.IOS -> 18.dp }
+    /** Corner radius of the beat bars. */
+    val bar: Dp = when (skin) { Skin.M3 -> 8.dp; Skin.ONEUI -> 50.dp; Skin.IOS -> 50.dp }
     val button: Dp = when (skin) { Skin.M3 -> 20.dp; Skin.ONEUI -> 28.dp; Skin.IOS -> 16.dp }
     /** Play button: a rounded square on Material, a circle on One UI, a squircle on iOS. */
     val playRadiusFraction: Float = when (skin) { Skin.M3 -> 0.3f; Skin.ONEUI -> 0.5f; Skin.IOS -> 0.34f }

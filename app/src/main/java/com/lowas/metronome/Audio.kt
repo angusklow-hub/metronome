@@ -8,7 +8,14 @@ const val SR = 44100
 
 val NOTE_NAMES = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
-/** Builds a mono 16-bit streaming AudioTrack tuned for low latency. */
+/**
+ * About a quarter of a second of audio (16-bit mono). The beat indicator and vibration follow the
+ * device's real playback position, so a deep buffer costs nothing in timing, and it rides out the
+ * short stalls the app has while it redraws, such as when the interface style changes.
+ */
+const val CUSHION_BYTES = SR / 4 * 2
+
+/** Builds a mono 16-bit streaming AudioTrack with a deep buffer so brief stalls never reach the speaker. */
 fun buildTrack(minBytes: Int = 0): AudioTrack {
     val minBuf = AudioTrack.getMinBufferSize(
         SR, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
@@ -27,8 +34,8 @@ fun buildTrack(minBytes: Int = 0): AudioTrack {
                 .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                 .build()
         )
-        .setBufferSizeInBytes(maxOf(minBuf * 2, minBytes, 4096))
+        .setBufferSizeInBytes(maxOf(minBuf * 2, minBytes, CUSHION_BYTES))
         .setTransferMode(AudioTrack.MODE_STREAM)
-        .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+        .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_NONE)
         .build()
 }

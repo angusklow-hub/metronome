@@ -32,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -44,6 +45,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.foundation.border
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -89,8 +92,8 @@ val SUBDIVS = listOf(1 to "Quarter", 2 to "Eighths", 3 to "Triplets", 4 to "Sixt
 @Composable
 private fun HoldBtn(pal: Pal, label: String, delta: Int) {
     Surface(
-        shape = CircleShape,
-        color = pal.chip.copy(alpha = if (pal.glass) 0.55f else 1f),
+        shape = if (LocalLook.current.m3) RoundedCornerShape(18.dp) else CircleShape,
+        color = if (LocalLook.current.ios) Color.White.copy(alpha = 0.16f) else pal.chip.copy(alpha = if (pal.glass) 0.55f else 1f),
         contentColor = pal.chipText,
         border = if (pal.glass) BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)) else null,
         modifier = Modifier
@@ -99,11 +102,13 @@ private fun HoldBtn(pal: Pal, label: String, delta: Int) {
                 detectTapGestures(
                     onPress = {
                         Metronome.setBpm(Metronome.settings.value.bpm + delta)
+                        Fx.play(Fxk.TICK)
                         coroutineScope {
                             val job = launch {
                                 delay(400)
                                 while (true) {
                                     Metronome.setBpm(Metronome.settings.value.bpm + delta)
+                                    Fx.play(Fxk.TICK)
                                     delay(70)
                                 }
                             }
@@ -141,7 +146,7 @@ fun BeatPattern(pal: Pal, s: MSettings, playing: Boolean, beat: Int) {
                 val h by animateDpAsState(target, LocalLook.current.beat(), label = "bar")
                 val base = when (st) {
                     '2' -> pal.sub
-                    '1' -> pal.chip
+                    '1' -> if (LocalLook.current.ios) Color.White.copy(alpha = 0.2f) else pal.chip
                     else -> pal.chip.copy(alpha = 0.6f)
                 }
                 val on = playing && beat == i && st != '0'
@@ -149,14 +154,14 @@ fun BeatPattern(pal: Pal, s: MSettings, playing: Boolean, beat: Int) {
                     Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .clickable { Metronome.cyclePattern(i) },
+                        .clickable { Fx.play(Fxk.SELECT); Metronome.cyclePattern(i) },
                     contentAlignment = Alignment.BottomCenter
                 ) {
                     Box(
                         Modifier
                             .fillMaxWidth()
                             .height(h)
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(LocalLook.current.bar))
                             .background(if (on) pal.accent else base)
                     )
                 }
@@ -267,7 +272,7 @@ fun MetronomeScreen(
                     modifier = Modifier
                         .weight(1f)
                         .height(56.dp)
-                        .pointerInput(Unit) { detectTapGestures(onPress = { Metronome.tap() }) }
+                        .pointerInput(Unit) { detectTapGestures(onPress = { Fx.play(Fxk.TAP); Metronome.tap() }) }
                 ) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("Tap", style = MaterialTheme.typography.labelLarge)
@@ -277,9 +282,15 @@ fun MetronomeScreen(
             }
             PlayButton(pal, playing, 84, onToggle)
             Spacer(Modifier.size(14.dp))
+            val lk = LocalLook.current
             FilledTonalButton(
-                onClick = onOptions,
+                onClick = { Fx.play(Fxk.SELECT); onOptions() },
                 modifier = (if (s.showTap) Modifier.weight(1f) else Modifier.width(140.dp)).height(56.dp),
+                shape = RoundedCornerShape(lk.button),
+                colors = if (lk.ios) ButtonDefaults.filledTonalButtonColors(
+                    containerColor = Color.White.copy(alpha = 0.16f), contentColor = pal.text
+                ) else ButtonDefaults.filledTonalButtonColors(),
+                border = if (lk.ios) BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)) else null,
             ) {
                 Text("Options")
             }
@@ -287,38 +298,79 @@ fun MetronomeScreen(
     }
 }
 
-/** Material 3 floating action button used as the play/stop control. */
+@Composable
+private fun PlayGlyph(color: Color, dp: Dp, playing: Boolean) {
+    Canvas(Modifier.size(dp)) {
+        if (playing) {
+            drawRoundRect(
+                color,
+                topLeft = Offset(size.width * 0.1f, size.height * 0.1f),
+                size = Size(size.width * 0.8f, size.height * 0.8f),
+                cornerRadius = CornerRadius(6.dp.toPx())
+            )
+        } else {
+            val p = Path().apply {
+                moveTo(size.width * 0.22f, 0f)
+                lineTo(size.width, size.height / 2f)
+                lineTo(size.width * 0.22f, size.height)
+                close()
+            }
+            drawPath(p, color)
+        }
+    }
+}
+
+/**
+ * The play/stop control, built differently per style: an extended pill with a label on Material 3,
+ * a big round button on One UI, and a glowing glass capsule on Glass.
+ */
 @Composable
 fun PlayButton(pal: Pal, playing: Boolean, sizeDp: Int, onClick: () -> Unit) {
     val look = LocalLook.current
     val src = remember { MutableInteractionSource() }
-    FloatingActionButton(
-        onClick = onClick,
-        interactionSource = src,
-        modifier = Modifier
-            .size(sizeDp.dp)
-            .pressSpring(src),
-        shape = RoundedCornerShape((sizeDp * look.playRadiusFraction).dp),
-        containerColor = pal.accent,
-        contentColor = pal.onAccent
-    ) {
-        Canvas(Modifier.size((sizeDp * 0.34f).dp)) {
-            if (playing) {
-                drawRoundRect(
-                    pal.onAccent,
-                    topLeft = Offset(size.width * 0.1f, size.height * 0.1f),
-                    size = Size(size.width * 0.8f, size.height * 0.8f),
-                    cornerRadius = CornerRadius(6.dp.toPx())
-                )
-            } else {
-                val p = Path().apply {
-                    moveTo(size.width * 0.22f, 0f)
-                    lineTo(size.width, size.height / 2f)
-                    lineTo(size.width * 0.22f, size.height)
-                    close()
-                }
-                drawPath(p, pal.onAccent)
-            }
+    val click = { Fx.play(if (playing) Fxk.OFF else Fxk.ON); onClick() }
+    when (look.skin) {
+        Skin.M3 -> ExtendedFloatingActionButton(
+            text = { Text(if (playing) "Stop" else "Start", style = MaterialTheme.typography.titleMedium) },
+            icon = { PlayGlyph(pal.onAccent, 20.dp, playing) },
+            onClick = click,
+            modifier = Modifier.height(72.dp).pressSpring(src),
+            shape = RoundedCornerShape(24.dp),
+            containerColor = pal.accent,
+            contentColor = pal.onAccent,
+            interactionSource = src
+        )
+
+        Skin.ONEUI -> FloatingActionButton(
+            onClick = click,
+            interactionSource = src,
+            modifier = Modifier.size(sizeDp.dp).pressSpring(src),
+            shape = CircleShape,
+            containerColor = pal.accent,
+            contentColor = pal.onAccent
+        ) { PlayGlyph(pal.onAccent, (sizeDp * 0.34f).dp, playing) }
+
+        Skin.IOS -> {
+            val shape = RoundedCornerShape(36.dp)
+            Box(
+                Modifier
+                    .width((sizeDp * 1.5f).dp)
+                    .height(72.dp)
+                    .pressSpring(src)
+                    .drawBehind {
+                        drawRoundRect(
+                            pal.accent.copy(alpha = if (playing) 0.45f else 0.25f),
+                            topLeft = Offset(-6.dp.toPx(), 4.dp.toPx()),
+                            size = Size(size.width + 12.dp.toPx(), size.height + 8.dp.toPx()),
+                            cornerRadius = CornerRadius(40.dp.toPx())
+                        )
+                    }
+                    .clip(shape)
+                    .background(Brush.verticalGradient(listOf(pal.accent.copy(alpha = 0.95f), pal.accent.copy(alpha = 0.72f))))
+                    .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.7f), Color.White.copy(alpha = 0.1f))), shape)
+                    .clickable(interactionSource = src, indication = null) { click() },
+                contentAlignment = Alignment.Center
+            ) { PlayGlyph(pal.onAccent, 26.dp, playing) }
         }
     }
 }

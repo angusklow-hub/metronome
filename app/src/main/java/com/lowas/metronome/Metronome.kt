@@ -27,7 +27,7 @@ enum class Sound(val label: String) {
 }
 
 enum class Skin(val label: String) {
-    M3("Material 3"), ONEUI("One UI"), IOS("iOS 27")
+    M3("Material 3"), ONEUI("One UI"), IOS("Glass")
 }
 
 enum class ThemeMode(val label: String) {
@@ -81,6 +81,9 @@ data class MSettings(
     val showTap: Boolean = true,
     val showQuick: Boolean = false,
     val dialHaptic: Boolean = true,
+    /** Click sounds and haptics on buttons, toggles and the dial. */
+    val uiSounds: Boolean = true,
+    val uiHaptics: Boolean = true,
     /** Turn the audible click off to practise with vibration and visuals only. */
     val soundOn: Boolean = true,
     /** Click pitch in semitones, -12 to +12. */
@@ -96,7 +99,7 @@ data class MSettings(
     /** Frosted-glass look: translucent panels over a soft colour backdrop. */
     val glass: Boolean = true,
     val glassAmt: Float = 0.6f,
-    /** Interface style: Material 3, One UI or iOS 27. */
+    /** Interface style: Material 3, One UI or Glass (iOS 27 style). */
     val skin: Int = 0,
     /** Second pulse across the same bar, for polyrhythms such as 3 over 4. */
     val polyOn: Boolean = false,
@@ -168,6 +171,7 @@ object Metronome {
     private val cache = ConcurrentHashMap<Int, ShortArray>()
     private val taps = ArrayList<Long>()
     private val events = ConcurrentLinkedQueue<Evt>()
+    @Volatile private var activeTrack: AudioTrack? = null
 
     /** Typical delay between asking a phone motor to buzz and feeling it, in milliseconds. */
     private const val VIB_LATENCY_MS = 25L
@@ -234,6 +238,8 @@ object Metronome {
             showTap = prefs.getBoolean("showTap", d.showTap),
             showQuick = prefs.getBoolean("showQuick", d.showQuick),
             dialHaptic = prefs.getBoolean("dialHaptic", d.dialHaptic),
+            uiSounds = prefs.getBoolean("uiSounds", d.uiSounds),
+            uiHaptics = prefs.getBoolean("uiHaptics", d.uiHaptics),
             soundOn = prefs.getBoolean("soundOn", d.soundOn),
             pitch = prefs.getInt("pitch", d.pitch).coerceIn(-12, 12),
             swing = prefs.getInt("swing", d.swing).coerceIn(0, 25),
@@ -279,6 +285,7 @@ object Metronome {
             .putBoolean("showPattern", s.showPattern).putBoolean("showName", s.showName)
             .putBoolean("showTimer", s.showTimer).putBoolean("showTap", s.showTap)
             .putBoolean("showQuick", s.showQuick).putBoolean("dialHaptic", s.dialHaptic)
+            .putBoolean("uiSounds", s.uiSounds).putBoolean("uiHaptics", s.uiHaptics)
             .putBoolean("soundOn", s.soundOn).putInt("pitch", s.pitch).putInt("swing", s.swing)
             .putBoolean("gapOn", s.gapOn).putInt("gapPlay", s.gapPlay).putInt("gapMute", s.gapMute)
             .putInt("countIn", s.countIn)
@@ -477,11 +484,13 @@ object Metronome {
         var track: AudioTrack? = null
         var secsPlayed = 0
         try {
-            val t = buildTrack()
+            var t = buildTrack()
             track = t
+            activeTrack = t
             t.play()
             events.clear()
-            Thread({ syncLoop(t, myGen) }, "metronome-sync").apply {
+            var reopens = 0
+            Thread({ syncLoop(myGen) }, "metronome-sync").apply {
                 priority = Thread.MAX_PRIORITY
                 isDaemon = true
                 start()
@@ -559,7 +568,21 @@ object Metronome {
                 if (tick == 0) events.add(Evt(queued, bar, kind, bars + 1))
 
                 val w = t.write(buf, 0, frames)
-                if (w < 0) break
+                if (w < 0) {
+                    // The output went away (a route change, for example). Reopen it and carry on.
+                    if (reopens >= 3 || !running || gen != myGen) break
+                    reopens++
+                    try { t.stop() } catch (e: Exception) { }
+                    try { t.release() } catch (e: Exception) { }
+                    t = buildTrack()
+                    track = t
+                    activeTrack = t
+                    t.play()
+                    events.clear()
+                    queued = 0L
+                    barStart = 0L
+                    continue
+                }
                 queued += frames
 
                 val secs = if (bars < s.countIn) 0 else ((System.nanoTime() - startNs) / 1_000_000_000L).toInt()
@@ -604,6 +627,7 @@ object Metronome {
         } catch (e: Exception) {
             // Audio device unavailable; fall through to cleanup.
         } finally {
+            activeTrack = null
             addPractice(secsPlayed)
             try { track?.stop() } catch (e: Exception) { }
             try { track?.release() } catch (e: Exception) { }
@@ -635,7 +659,7 @@ object Metronome {
      * Fires the beat indicator and vibration at the moment the click is heard, by watching the
      * audio device's real playback position rather than when the click was queued.
      */
-    private fun syncLoop(track: AudioTrack, myGen: Int) {
+    private fun syncLoop(myGen: Int) {
         val ts = AudioTimestamp()
         val t0 = System.nanoTime()
         try {
@@ -645,7 +669,12 @@ object Metronome {
                     Thread.sleep(2)
                     continue
                 }
-                val head = headFrames(track, ts)
+                val tr = activeTrack
+                if (tr == null) {
+                    Thread.sleep(2)
+                    continue
+                }
+                val head = headFrames(tr, ts)
                 val s = settings.value
                 val lead = (VIB_LATENCY_MS + s.vibOffset) * SR / 1000L
                 // Give the audio device a moment to start before trusting an unknown position.

@@ -214,8 +214,9 @@ private fun palFrom(cs: ColorScheme, dark: Boolean, s: MSettings) = Pal(
     high = cs.surfaceContainerHighest,
     outline = cs.outlineVariant,
     chipText = cs.onSecondaryContainer,
-    glass = s.glass,
-    glassAmt = s.glassAmt,
+    // Material 3 is solid, One UI blends a little glass in, Glass is all glass.
+    glass = when (s.skin) { 0 -> false; 1 -> s.glass; else -> true },
+    glassAmt = when (s.skin) { 1 -> s.glassAmt * 0.55f; else -> s.glassAmt.coerceAtLeast(0.6f) },
 )
 
 /** Frosted-glass panel: a translucent gradient fill with a thin light edge. Solid when glass is off. */
@@ -284,7 +285,7 @@ fun SectionLabel(pal: Pal, text: String) {
 fun Chip(pal: Pal, label: String, selected: Boolean, onClick: () -> Unit) {
     FilterChip(
         selected = selected,
-        onClick = onClick,
+        onClick = { Fx.play(Fxk.SELECT); onClick() },
         label = { Text(label) },
         shape = RoundedCornerShape(LocalLook.current.chip)
     )
@@ -292,7 +293,7 @@ fun Chip(pal: Pal, label: String, selected: Boolean, onClick: () -> Unit) {
 
 @Composable
 fun RoundBtn(pal: Pal, label: String, onClick: () -> Unit, size: Dp = 52.dp) {
-    FilledTonalIconButton(onClick = onClick, modifier = Modifier.size(size)) {
+    FilledTonalIconButton(onClick = { Fx.play(Fxk.TAP); onClick() }, modifier = Modifier.size(size)) {
         Text(label, fontSize = 24.sp, fontWeight = FontWeight.Light)
     }
 }
@@ -328,7 +329,7 @@ fun SwitchRow(pal: Pal, title: String, sub: String, checked: Boolean, onChange: 
             Text(title, color = pal.text, style = MaterialTheme.typography.bodyLarge)
             Text(sub, color = pal.sub, style = MaterialTheme.typography.bodySmall)
         }
-        Switch(checked = checked, onCheckedChange = onChange)
+        Switch(checked = checked, onCheckedChange = { Fx.play(if (it) Fxk.ON else Fxk.OFF); onChange(it) })
     }
 }
 
@@ -392,13 +393,49 @@ val DroneIcon: DrawScope.(Color) -> Unit = { c ->
 private fun NavBar(pal: Pal, tab: Int, onTab: (Int) -> Unit) {
     val items = listOf("Metronome" to MetronomeIcon, "Tuner" to TunerIcon, "Drone" to DroneIcon)
     val look = LocalLook.current
+    if (look.ios) {
+        // Glass: a floating capsule that hovers over the content.
+        val shape = RoundedCornerShape(34.dp)
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 28.dp, vertical = 10.dp)
+        ) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .glassSurface(pal, shape)
+                    .padding(6.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                items.forEachIndexed { i, (_, icon) ->
+                    val sel = tab == i
+                    val tint = if (sel) pal.accent else pal.sub
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .height(52.dp)
+                            .clip(RoundedCornerShape(28.dp))
+                            .background(if (sel) Color.White.copy(alpha = if (pal.dark) 0.14f else 0.5f) else Color.Transparent)
+                            .clickable { Fx.play(Fxk.SELECT); onTab(i) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Canvas(Modifier.size(26.dp)) { icon(this, tint) }
+                    }
+                }
+            }
+        }
+        return
+    }
     NavigationBar(
         containerColor = if (pal.glass) pal.card.copy(alpha = 0.5f) else NavigationBarDefaults.containerColor
     ) {
         items.forEachIndexed { i, (label, icon) ->
             NavigationBarItem(
                 selected = tab == i,
-                onClick = { onTab(i) },
+                onClick = { Fx.play(Fxk.SELECT); onTab(i) },
                 alwaysShowLabel = !look.ios,
                 icon = {
                     val c = LocalContentColor.current
@@ -406,7 +443,7 @@ private fun NavBar(pal: Pal, tab: Int, onTab: (Int) -> Unit) {
                 },
                 label = if (look.navLabels) ({ Text(label) }) else null,
                 colors = NavigationBarItemDefaults.colors(
-                    indicatorColor = if (look.ios) Color.Transparent else pal.accent.copy(alpha = 0.22f)
+                    indicatorColor = if (look.m3) pal.chip else pal.accent.copy(alpha = 0.22f)
                 )
             )
         }
@@ -609,8 +646,8 @@ private fun ThemeSheet(pal: Pal, s: MSettings) {
                 SegmentedButton(
                     selected = s.skin == i,
                     onClick = {
-                        // iOS is built around translucency, so switching to it turns glass on.
-                        Metronome.update { it.copy(skin = i, glass = if (i == 2) true else it.glass) }
+                        Fx.play(Fxk.HEAVY)
+                        Metronome.update { it.copy(skin = i) }
                     },
                     shape = SegmentedButtonDefaults.itemShape(i, skins.size)
                 ) { Text(sk.label, maxLines = 1) }
@@ -619,9 +656,9 @@ private fun ThemeSheet(pal: Pal, s: MSettings) {
         Spacer(Modifier.height(8.dp))
         Text(
             when (Skin.values().getOrElse(s.skin) { Skin.M3 }) {
-                Skin.M3 -> "Material 3: springy motion, wallpaper colours, pill-shaped controls."
-                Skin.ONEUI -> "One UI: large titles, roomy rounded cards, calm easing."
-                Skin.IOS -> "iOS 27: translucent glass panels, tight type, quick settling motion."
+                Skin.M3 -> "Material 3: solid tonal surfaces with no glass, springy bouncy motion, wallpaper colours."
+                Skin.ONEUI -> "One UI: Samsung style, large titles and roomy cards with a light touch of glass, calm easing."
+                Skin.IOS -> "Glass: fully translucent frosted panels, glowing highlights, tight type, quick settling motion."
             },
             color = pal.sub,
             style = MaterialTheme.typography.bodySmall
@@ -639,10 +676,12 @@ private fun ThemeSheet(pal: Pal, s: MSettings) {
             }
         }
         Spacer(Modifier.height(20.dp))
-        SwitchRow(pal, "Glass effect", "Frosted translucent panels over a soft colour glow", s.glass) { v ->
-            Metronome.update { it.copy(glass = v) }
+        if (s.skin == 1) {
+            SwitchRow(pal, "Glass touch", "A light frosted blend on cards and bars", s.glass) { v ->
+                Metronome.update { it.copy(glass = v) }
+            }
         }
-        if (s.glass) {
+        if (s.skin == 2 || (s.skin == 1 && s.glass)) {
             SectionLabel(pal, "Glass strength")
             AppSlider(pal, s.glassAmt, { v -> Metronome.update { it.copy(glassAmt = v) } })
         }

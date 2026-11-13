@@ -142,8 +142,14 @@ private fun OptDisplay(pal: Pal, s: MSettings) {
     SwitchRow(pal, "Quick tempos", "A row of common tempos to jump to", s.showQuick) { v ->
         Metronome.update { it.copy(showQuick = v) }
     }
-    SwitchRow(pal, "Dial haptics", "A small tick while you spin the dial", s.dialHaptic) { v ->
+    SwitchRow(pal, "Dial haptics", "A small tick for every BPM while you spin the dial", s.dialHaptic) { v ->
         Metronome.update { it.copy(dialHaptic = v) }
+    }
+    SwitchRow(pal, "Interface sounds", "Soft clicks on buttons, toggles and the dial", s.uiSounds) { v ->
+        Metronome.update { it.copy(uiSounds = v) }
+    }
+    SwitchRow(pal, "Interface haptics", "A small buzz on buttons and toggles", s.uiHaptics) { v ->
+        Metronome.update { it.copy(uiHaptics = v) }
     }
 }
 

@@ -47,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -79,11 +80,27 @@ private fun angleOf(o: Offset, cx: Float, cy: Float): Float =
 /** The surface all three tempo displays sit on, so they share one look. */
 @Composable
 fun Stage(pal: Pal, content: @Composable () -> Unit) {
+    val look = LocalLook.current
+    val shape = RoundedCornerShape(look.stage)
+    val skinMod = when (look.skin) {
+        // Material: a solid tonal block, no glass.
+        Skin.M3 -> Modifier.background(androidx.compose.ui.graphics.lerp(pal.card, pal.accent, 0.16f), shape)
+        // One UI: a calm card with only a touch of glass.
+        Skin.ONEUI -> Modifier.glassSurface(pal, shape)
+        // Glass: frosted panel with a coloured glow shining through it.
+        Skin.IOS -> Modifier.glassSurface(pal, shape).drawBehind {
+            val r = size.minDimension * 0.7f
+            drawCircle(
+                Brush.radialGradient(listOf(pal.accent.copy(alpha = 0.3f), Color.Transparent), center = center, radius = r),
+                radius = r
+            )
+        }
+    }
     Box(
         Modifier
             .fillMaxWidth()
-            .glassSurface(pal, RoundedCornerShape(LocalLook.current.stage))
-            .padding(LocalLook.current.cardPad),
+            .then(skinMod)
+            .padding(look.cardPad),
         contentAlignment = Alignment.Center
     ) { content() }
 }
@@ -118,6 +135,9 @@ fun TempoDial(
     val haptic = LocalHapticFeedback.current
     val look = LocalLook.current
     val pulse = remember { Animatable(0f) }
+    val rot by animateFloatAsState(
+        bpm * 3f, spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessHigh), label = "dialRot"
+    )
     val tick by Metronome.tick.collectAsState()
     LaunchedEffect(tick, playing) {
         if (playing && tick > 0) {
@@ -131,78 +151,69 @@ fun TempoDial(
             Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) {
-                    // Drag right to speed up, left to slow down; flick to let it keep spinning.
+                    // A real knob: the ticks turn exactly with your finger (3 degrees per BPM,
+                    // clockwise is faster) and a flick keeps it spinning.
                     val tracker = VelocityTracker()
                     var fling: Job? = null
                     var acc = 0f
-                    val perBpm = 6.dp.toPx()
-                    fun bump(px: Float) {
-                        acc += px / perBpm
+                    var lastAng = 0f
+                    var unwrapped = 0f
+                    fun angleOf(p: Offset): Float =
+                        Math.toDegrees(
+                            atan2((p.y - size.height / 2f).toDouble(), (p.x - size.width / 2f).toDouble())
+                        ).toFloat()
+                    fun bump(deg: Float) {
+                        acc += deg / 3f
                         val step = acc.toInt()
                         if (step != 0) {
                             acc -= step
-                            Metronome.setBpm(Metronome.settings.value.bpm + step)
+                            val before = Metronome.settings.value.bpm
+                            Metronome.setBpm(before + step)
+                            if (Metronome.settings.value.bpm != before) {
+                                Fx.play(Fxk.TICK, Metronome.settings.value.dialHaptic)
+                            }
                         }
                     }
                     detectDragGestures(
-                        onDragStart = {
+                        onDragStart = { o ->
                             fling?.cancel()
                             tracker.resetTracking()
                             acc = 0f
+                            unwrapped = 0f
+                            lastAng = angleOf(o)
                         },
                         onDragEnd = {
                             val v = tracker.calculateVelocity().x
-                            if (abs(v) > 300f) {
+                            if (abs(v) > 150f) {
                                 fling = scope.launch {
                                     var last = 0f
-                                    Animatable(0f).animateDecay(v, exponentialDecay<Float>()) {
+                                    Animatable(0f).animateDecay(v, exponentialDecay<Float>(frictionMultiplier = 1.3f)) {
                                         bump(value - last)
                                         last = value
                                     }
                                 }
                             }
                         }
-                    ) { change, drag ->
+                    ) { change, _ ->
                         change.consume()
-                        tracker.addPosition(change.uptimeMillis, change.position)
-                        bump(drag.x)
-                        if (Metronome.settings.value.dialHaptic) {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        val a = angleOf(change.position)
+                        val dist = (change.position - Offset(size.width / 2f, size.height / 2f)).getDistance()
+                        if (dist < 36.dp.toPx()) {
+                            // Too close to the middle the angle jumps about; ignore it.
+                            lastAng = a
+                            return@detectDragGestures
                         }
+                        var d = a - lastAng
+                        if (d > 180f) d -= 360f
+                        if (d < -180f) d += 360f
+                        lastAng = a
+                        unwrapped += d
+                        tracker.addPosition(change.uptimeMillis, Offset(unwrapped, 0f))
+                        bump(d)
                     }
                 }
         ) {
-            val ring = size.minDimension / 2f - 4.dp.toPx()
-            drawCircle(pal.face, radius = ring)
-            if (pal.glass) {
-                drawCircle(
-                    Brush.radialGradient(
-                        listOf(Color.White.copy(alpha = 0.14f), Color.Transparent),
-                        center = Offset(center.x - ring * 0.35f, center.y - ring * 0.5f), radius = ring * 1.1f
-                    ),
-                    radius = ring
-                )
-            }
-            drawCircle(pal.outline, radius = ring, style = Stroke(2.dp.toPx()))
-            if (pulse.value > 0.01f) {
-                drawCircle(pal.accent.copy(alpha = pulse.value * 0.6f), radius = ring, style = Stroke(8.dp.toPx()))
-            }
-            rotate(degrees = (bpm * 3f) % 360f, pivot = center) {
-                for (i in 0 until 60) {
-                    val major = i % 5 == 0
-                    val a = Math.toRadians(i * 6.0)
-                    val r1 = ring - 20.dp.toPx()
-                    val r2 = r1 - (if (major) 16.dp.toPx() else 9.dp.toPx())
-                    drawLine(
-                        if (major) pal.text.copy(alpha = 0.75f) else pal.sub.copy(alpha = 0.45f),
-                        Offset(center.x + (r1 * cos(a)).toFloat(), center.y + (r1 * sin(a)).toFloat()),
-                        Offset(center.x + (r2 * cos(a)).toFloat(), center.y + (r2 * sin(a)).toFloat()),
-                        strokeWidth = if (major) 2.5.dp.toPx() else 1.5.dp.toPx(),
-                        cap = StrokeCap.Round
-                    )
-                }
-            }
-            drawCircle(pal.accent, radius = 4.dp.toPx(), center = Offset(center.x, center.y - ring + 9.dp.toPx()))
+            drawDial(pal, look.skin, bpm, rot, pulse.value)
         }
         Readout(bpm, playing, elapsed, onEdit, pal.text, if (playing) pal.accent else pal.sub)
     }
@@ -218,6 +229,7 @@ fun PendulumView(
     onEdit: () -> Unit, onToggle: () -> Unit, modifier: Modifier = Modifier
 ) {
     val tick by Metronome.tick.collectAsState()
+    val look = LocalLook.current
     val angle = remember { Animatable(0f) }
     var side by remember { mutableStateOf(1) }
     val maxAngle = 24f
@@ -242,7 +254,9 @@ fun PendulumView(
                         val pivotY = size.height * 0.7f
                         val len = size.height * 0.64f
                         val t = ((pivotY - y) / len).coerceIn(0.2f, 0.9f)
-                        Metronome.setBpm((30f + (0.9f - t) / 0.7f * 270f).toInt())
+                        val nb = (30f + (0.9f - t) / 0.7f * 270f).toInt().coerceIn(30, 300)
+                        if (nb != Metronome.settings.value.bpm) Fx.play(Fxk.TICK, Metronome.settings.value.dialHaptic)
+                        Metronome.setBpm(nb)
                     }
                     detectDragGestures(onDragStart = { set(it.y) }) { change, _ ->
                         change.consume()
@@ -250,45 +264,7 @@ fun PendulumView(
                     }
                 }
         ) {
-            val bw = min(size.width, size.height)
-            val h = size.height
-            val cx = size.width / 2f
-            val pivot = Offset(cx, h * 0.7f)
-            val len = h * 0.64f
-
-            val body = Path().apply {
-                moveTo(cx - bw * 0.09f, h * 0.12f)
-                lineTo(cx + bw * 0.09f, h * 0.12f)
-                lineTo(cx + bw * 0.42f, h * 0.99f)
-                lineTo(cx - bw * 0.42f, h * 0.99f)
-                close()
-            }
-            drawPath(body, pal.face)
-            drawPath(body, pal.outline, style = Stroke(2.dp.toPx(), join = StrokeJoin.Round))
-            for (i in 0..8) {
-                val y = pivot.y - (0.2f + 0.7f * i / 8f) * len
-                if (y > h * 0.15f) {
-                    drawLine(
-                        pal.sub.copy(alpha = 0.5f),
-                        Offset(cx - 22.dp.toPx(), y), Offset(cx - 14.dp.toPx(), y),
-                        strokeWidth = 1.5.dp.toPx(), cap = StrokeCap.Round
-                    )
-                }
-            }
-            rotate(degrees = angle.value, pivot = pivot) {
-                drawLine(pal.text.copy(alpha = 0.85f), pivot, Offset(pivot.x, pivot.y - len), strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
-                val t = 0.9f - (bpm - 30f) / 270f * 0.7f
-                val ww = bw * 0.22f
-                val wh = bw * 0.14f
-                drawRoundRect(
-                    pal.accent,
-                    topLeft = Offset(pivot.x - ww / 2f, pivot.y - t * len - wh / 2f),
-                    size = Size(ww, wh),
-                    cornerRadius = CornerRadius(wh * 0.4f)
-                )
-            }
-            drawCircle(pal.accent, radius = 8.dp.toPx(), center = pivot)
-            drawCircle(pal.face, radius = 3.dp.toPx(), center = pivot)
+            drawPendulum(pal, look.skin, bpm, angle.value)
         }
         Box(Modifier.padding(bottom = 2.dp)) {
             Readout(bpm, playing, elapsed, onEdit, pal.text, if (playing) pal.accent else pal.sub, small = true)
@@ -333,41 +309,18 @@ fun BlobView(
                         if (step != 0) {
                             acc -= step
                             Metronome.setBpm(Metronome.settings.value.bpm + step)
+                            Fx.play(Fxk.TICK, Metronome.settings.value.dialHaptic)
                         }
                     }
                 }
         ) {
-            val base = size.minDimension / 2f * 0.64f
-            val s = scale.value
-            drawCircle(pal.face, radius = size.minDimension / 2f - 4.dp.toPx())
-            drawCircle(pal.accent.copy(alpha = 0.14f), radius = base * (1.2f + (s - 1f) * 0.8f))
-
-            val n = 10
-            val wob = if (playing) 0.075f else 0.045f
-            val pts = List(n) { k ->
-                val a = 2 * PI * k / n
-                val r = base * s * (1f + wob * sin(phase * 2f + k * 1.7f) + wob * 0.7f * sin(phase * 3f - k * 2.3f))
-                Offset(center.x + (r * cos(a)).toFloat(), center.y + (r * sin(a)).toFloat())
-            }
-            fun mid(a: Offset, b: Offset) = Offset((a.x + b.x) / 2f, (a.y + b.y) / 2f)
-            val path = Path()
-            val start = mid(pts[n - 1], pts[0])
-            path.moveTo(start.x, start.y)
-            for (i in 0 until n) {
-                val m = mid(pts[i], pts[(i + 1) % n])
-                path.quadraticBezierTo(pts[i].x, pts[i].y, m.x, m.y)
-            }
-            path.close()
-            drawPath(path, pal.accent)
-            drawPath(
-                path,
-                Brush.radialGradient(
-                    listOf(Color.White.copy(alpha = if (pal.glass) 0.38f else 0.15f), Color.Transparent),
-                    center = Offset(center.x - base * 0.35f, center.y - base * 0.45f), radius = base * 1.1f
-                )
-            )
+            drawBlob(pal, look.skin, scale.value, phase, playing)
         }
-        Readout(bpm, playing, elapsed, onEdit, pal.onAccent, pal.onAccent.copy(alpha = 0.8f))
+        if (look.ios) {
+            Readout(bpm, playing, elapsed, onEdit, pal.text, pal.text.copy(alpha = 0.75f))
+        } else {
+            Readout(bpm, playing, elapsed, onEdit, pal.onAccent, pal.onAccent.copy(alpha = 0.8f))
+        }
     }
 }
 
@@ -378,6 +331,7 @@ fun RingView(
     onEdit: () -> Unit, modifier: Modifier = Modifier
 ) {
     val s by Metronome.settings.collectAsState()
+    val look = LocalLook.current
     val tick by Metronome.tick.collectAsState()
     val prog = remember { Animatable(0f) }
     LaunchedEffect(tick, playing) {
@@ -390,34 +344,7 @@ fun RingView(
     }
     Box(modifier, contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
-            val n = s.beats
-            val gap = if (n > 1) 7f else 0f
-            val sw = 360f / n
-            val r = size.minDimension / 2f - 24.dp.toPx()
-            val tl = Offset(center.x - r, center.y - r)
-            val box = Size(r * 2f, r * 2f)
-            for (i in 0 until n) {
-                val st = s.pattern.getOrElse(i) { '1' }
-                val width = (if (st == '2') 22.dp else 13.dp).toPx()
-                val start = -90f + i * sw + gap / 2f
-                val sweep = sw - gap
-                drawArc(
-                    if (st == '0') pal.outline.copy(alpha = 0.4f) else pal.face,
-                    start, sweep, false, tl, box, style = Stroke(width)
-                )
-                val frac = when {
-                    !playing -> 0f
-                    i < beat -> 1f
-                    i == beat -> prog.value
-                    else -> 0f
-                }
-                if (frac > 0f && st != '0') {
-                    drawArc(
-                        if (i < beat) pal.accent.copy(alpha = 0.45f) else pal.accent,
-                        start, sweep * frac, false, tl, box, style = Stroke(width)
-                    )
-                }
-            }
+            drawRing(pal, look.skin, s, playing, beat, prog.value)
         }
         Readout(bpm, playing, elapsed, onEdit, pal.text, if (playing) pal.accent else pal.sub)
     }
@@ -434,7 +361,7 @@ fun LightsView(
     val n = s.beats
     val cols = when { n <= 4 -> n; n <= 8 -> 4; else -> 6 }
     val rows = (n + cols - 1) / cols
-    val sz = if (cols <= 4) 56.dp else 42.dp
+    val sz = if (cols <= 4) 64.dp else 46.dp
     Column(modifier, verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         for (r in 0 until rows) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -456,19 +383,34 @@ fun LightsView(
                         val sc by animateFloatAsState(
                             if (on) 1f + look.swell * 0.6f else 1f, look.beat(), label = "lightScale"
                         )
+                        val shape = when (look.skin) {
+                            Skin.M3 -> CircleShape
+                            Skin.ONEUI -> RoundedCornerShape(16.dp)
+                            Skin.IOS -> RoundedCornerShape(50)
+                        }
+                        val w = if (look.skin == Skin.IOS) sz * 0.78f else sz
+                        val glassFill = if (look.ios) {
+                            if (on) pal.accent.copy(alpha = 0.9f) else Color.White.copy(alpha = if (st == '0') 0.06f else 0.16f)
+                        } else fill
                         Box(
                             Modifier
-                                .size(sz)
+                                .size(w, if (look.skin == Skin.IOS) sz * 0.5f else sz)
                                 .scale(sc)
-                                .clip(CircleShape)
-                                .background(fill)
-                                .then(if (st == '2') Modifier.border(2.dp, pal.accent, CircleShape) else Modifier),
+                                .clip(shape)
+                                .background(glassFill)
+                                .then(
+                                    when {
+                                        look.ios -> Modifier.border(1.dp, Color.White.copy(alpha = if (on) 0.7f else 0.3f), shape)
+                                        st == '2' -> Modifier.border(2.dp, pal.accent, shape)
+                                        else -> Modifier
+                                    }
+                                ),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 "${i + 1}",
                                 color = if (on) pal.onAccent else pal.chipText,
-                                style = MaterialTheme.typography.titleMedium
+                                style = if (look.skin == Skin.ONEUI) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium
                             )
                         }
                     }
