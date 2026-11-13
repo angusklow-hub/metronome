@@ -42,6 +42,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -113,6 +114,7 @@ fun TempoDial(
     pal: Pal, bpm: Int, playing: Boolean, beat: Int, elapsed: Int,
     onEdit: () -> Unit, modifier: Modifier = Modifier
 ) {
+    val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     val look = LocalLook.current
     val pulse = remember { Animatable(0f) }
@@ -151,7 +153,7 @@ fun TempoDial(
                         onDragEnd = {
                             val v = tracker.calculateVelocity().x
                             if (abs(v) > 300f) {
-                                fling = launch {
+                                fling = scope.launch {
                                     var last = 0f
                                     Animatable(0f).animateDecay(v, exponentialDecay<Float>()) {
                                         bump(value - last)
